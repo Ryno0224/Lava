@@ -8,12 +8,12 @@
     "vcs": {
       "sarifIdea": {
         "repositoryUri": "https://github.com/Ryno0224/Lava.git",
-        "revisionId": "2c740c9dd9042ad4d9f713d09224f0350bd2d15a",
+        "revisionId": "127bc1113f54db41536dc4a972e6cd00a6270e4f",
         "branch": "refs/heads/master"
       }
     },
     "deviceId": "200820300000000-b570-1164-95c2-e684cf066e6f",
-    "jobUrl": "https://github.com/Ryno0224/Lava/actions/runs/8298583864",
+    "jobUrl": "https://github.com/Ryno0224/Lava/actions/runs/8298623129",
     "repoUrl": "https://github.com/Ryno0224/Lava.git"
   }
 }

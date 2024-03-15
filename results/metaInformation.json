@@ -1,19 +1,19 @@
 {
-  "total": 31,
+  "total": 8,
   "tools inspection": {
-    "Code Inspection": 31
+    "Code Inspection": 8
   },
   "linter": "QDPYC",
   "attributes": {
     "vcs": {
       "sarifIdea": {
         "repositoryUri": "https://github.com/Ryno0224/Lava.git",
-        "revisionId": "d0b78abbaeed4c31f270daabdcf0821f716f987e",
+        "revisionId": "8c9db982c307b5382766ad2ebc6b860d5898fe51",
         "branch": "refs/heads/master"
       }
     },
     "deviceId": "200820300000000-b570-1164-95c2-e684cf066e6f",
-    "jobUrl": "https://github.com/Ryno0224/Lava/actions/runs/8298200911",
+    "jobUrl": "https://github.com/Ryno0224/Lava/actions/runs/8298257322",
     "repoUrl": "https://github.com/Ryno0224/Lava.git"
   }
 }

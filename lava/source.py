@@ -1,4 +1,3 @@
-import json
 import re
 from logging import getLogger
 from os import getenv
@@ -12,7 +11,6 @@ from yt_dlp import YoutubeDL
 from yt_dlp.utils import UnsupportedError, DownloadError
 
 from lava.errors import LoadError
-from lava.variables import Variables
 
 
 class BaseSource:
@@ -41,6 +39,11 @@ class BaseSource:
 
 
 class SpotifyAudioTrack(DeferredAudioTrack):
+    def __init__(self, track, requester, **extra):
+        super().__init__(track, requester, **extra)
+
+        self.track = None
+
     async def load(self, client):  # skipcq: PYL-W0201
         getLogger('lava.sources').info("Loading spotify track %s...", self.title)
 
@@ -74,7 +77,7 @@ class SpotifySource(BaseSource):
             client_secret=spotify_client_secret
         )
 
-        Variables.SPOTIFY_CLIENT = Spotify(auth_manager=credentials)
+        self.spotify_client = Spotify(auth_manager=credentials)
 
     def check_query(self, query: str) -> bool:
         spotify_url_rx = r'^(https://open\.spotify\.com/)(track|album|playlist)/([a-zA-Z0-9]+)(.*)$'
@@ -113,7 +116,7 @@ class SpotifySource(BaseSource):
         if not track_id:
             return None
 
-        track = Variables.SPOTIFY_CLIENT.track(track_id)
+        track = self.spotify_client.track(track_id)
 
         if track:
             return SpotifyAudioTrack(
@@ -124,7 +127,8 @@ class SpotifySource(BaseSource):
                     'length': track['duration_ms'],
                     'isStream': False,
                     'title': track['name'],
-                    'uri': f"https://open.spotify.com/track/{track['id']}"
+                    'uri': f"https://open.spotify.com/track/{track['id']}",
+                    'artworkUrl': track['album']['images'][0]['url']
                 },
                 requester=0
             )
@@ -141,7 +145,7 @@ class SpotifySource(BaseSource):
         if not playlist_id:
             return [], None
 
-        playlist = Variables.SPOTIFY_CLIENT.playlist(playlist_id)
+        playlist = self.spotify_client.playlist(playlist_id)
 
         playlist_info = PlaylistInfo(playlist['name'], -1)
 
@@ -158,7 +162,8 @@ class SpotifySource(BaseSource):
                             'length': track['track']['duration_ms'],
                             'isStream': False,
                             'title': track['track']['name'],
-                            'uri': f"https://open.spotify.com/track/{track['track']['id']}"
+                            'uri': f"https://open.spotify.com/track/{track['track']['id']}",
+                            'artworkUrl': track['track']['images'][0]['url']
                         },
                         requester=0
                     )
@@ -178,7 +183,7 @@ class SpotifySource(BaseSource):
         if not album_id:
             return [], None
 
-        album = Variables.SPOTIFY_CLIENT.album(album_id)
+        album = self.spotify_client.album(album_id)
 
         playlist_info = PlaylistInfo(album['name'], -1)
 
@@ -195,7 +200,8 @@ class SpotifySource(BaseSource):
                             'length': track['duration_ms'],
                             'isStream': False,
                             'title': track['name'],
-                            'uri': f"https://open.spotify.com/track/{track['id']}"
+                            'uri': f"https://open.spotify.com/track/{track['id']}",
+                            'artworkUrl': album['images'][0]['url']
                         },
                         requester=0
                     )
@@ -264,12 +270,12 @@ class BilibiliSource(BaseSource):
         return query.startswith('https://www.bilibili.com/video/') or query.startswith('https://b23.tv/')
 
     async def load_item(self, client: Client, query: str) -> Optional[LoadResult]:
-        audio_url, title = self.get_audio(query)
+        audio_url, title, author = self.get_audio(query)
 
         track = (await client.get_tracks(audio_url, check_local=False)).tracks[0]
 
         track.title = title
-        track.author = f'Unknown / [Bilibili]({query})'
+        track.author = f'{author} / [Bilibili]({query})'
 
         return LoadResult(
             load_type=LoadType.TRACK,
@@ -278,31 +284,87 @@ class BilibiliSource(BaseSource):
         )
 
     @staticmethod
-    def get_audio(url: str) -> Tuple[str, str]:
+    def get_video_info(bvid: str) -> Tuple[str, str]:
+        """
+        Gets video info from a Bilibili video bvid
+
+        :param bvid: Bilibili video bvid
+        :return: Tuple of video cid, video session
+        """
+        headers = {
+            'referer': 'https://www.bilibili.com/',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.114 Safari/537.36'
+        }
+        video_index_url = f"https://www.bilibili.com/video/{bvid}"
+        resp = requests.get(video_index_url, headers=headers).text
+        cid = re.findall('"cid":(\\d+),', resp)[0]
+        session = re.findall('"session":"(.*?)"', resp)[0]
+        return cid, session
+
+    def get_audio_url(self, url: str):
         """
         Gets audio URL from a Bilibili video URL
 
-        Code referenced from https://www.bilibili.com/read/cv16789932
         :param url: Bilibili video URL
-        :return: Tuple of audio URL and video title
+        :return: audio URL
         """
-        video_html = requests.get(url)
+        headers = {
+            'referer': 'https://www.bilibili.com/',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.114 Safari/537.36'
+        }
+
+        bvid = re.search(r"/video/([^/?]+)", url).group(1)
+
+        cid, session = self.get_video_info(bvid)
+
+        play_url = 'https://api.bilibili.com/x/player/playurl'
+
+        params = {
+            'cid': cid,
+            'qn': '2',
+            'type': '',
+            'otype': 'json',
+            'fourk': '1',
+            'bvid': bvid,
+            'fnver': '0',
+            'fnval': '976',
+            'session': session,
+        }
+
+        for _ in range(20):
+            json_data = requests.get(url=play_url, params=params, headers=headers).json()
+            audio_url = json_data['data']['dash']['audio'][0]['baseUrl']
+            if audio_url.startswith("https://upos-hz-mirrorakam.akamaized.net/"):
+                return audio_url
+
+    def get_audio(self, url: str) -> Tuple[str, str, str]:
+        """
+        Gets audio from a Bilibili video URL
+
+        :param url: Bilibili video URL
+        :return: Tuple of audio URL, video title, video author.
+        """
+        headers = {
+            'Connection': 'Keep-Alive',
+            'Accept-Language': 'en-US,en;q=0.8,zh-Hans-CN;q=0.5,zh-Hans;q=0.3',
+            'Accept': 'text/html, application/xhtml+xml, */*',
+            'referer': 'https://www.bilibili.com',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:99.0) Gecko/20100101 Firefox/99.0',
+        }
+
+        video_html = requests.get(url, headers=headers)
 
         values = video_html.text
 
-        text = BeautifulSoup(values, features='lxml')
+        text = BeautifulSoup(values, features='html.parser')
 
         title = text.find('title').contents[0].replace(' ', ',').replace('/', ',')
 
-        items = text.find_all('script')[2]
+        author = text.select_one('div.up-detail-top a').text.replace("\n", "")
 
-        items = items.contents[0].replace('window.__playinfo__=', '')
+        audio_url = self.get_audio_url(url)
 
-        obj = json.loads(items)
-
-        audio_url = obj["data"]["dash"]["audio"][0]["baseUrl"]
-
-        return audio_url, title
+        return audio_url, title, author
 
 
 class YTDLSource(BaseSource):
